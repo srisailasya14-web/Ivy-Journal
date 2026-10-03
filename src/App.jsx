@@ -65,6 +65,46 @@ async function api(path, options = {}) {
   return data;
 }
 
+function formatLocalDate(value, options = {}) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat(undefined, options).format(date);
+}
+
+function formatLocalDateTime(value) {
+  return formatLocalDate(value, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+function parseLocalDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (typeof value === "string") {
+    const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+    return new Date(isDateOnly ? `${value}T12:00:00` : value);
+  }
+  return new Date(value);
+}
+
+function toLocalDateKey(value) {
+  const date = parseLocalDate(value);
+  if (!date || Number.isNaN(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  if (hour < 21) return "Good evening";
+  return "Good night";
+}
+
 function Logo() {
   return (
     <div className="brand">
@@ -532,6 +572,10 @@ function Dashboard({ data, user, go, notify, onChange }) {
   const percent = data.taskStats.total
     ? Math.round((data.taskStats.completed / data.taskStats.total) * 100)
     : 0;
+  const todayKey = toLocalDateKey(new Date());
+  const todayTasks = (data.tasks || []).filter(
+    (task) => task.due_date && toLocalDateKey(task.due_date) === todayKey,
+  );
   const [suggestions, setSuggestions] = useState([]);
   useEffect(() => {
     api("/suggestions")
@@ -561,9 +605,16 @@ function Dashboard({ data, user, go, notify, onChange }) {
     <>
       <div className="welcome-row">
         <div>
-          <p className="eyebrow">Tuesday, September 15, 2026</p>
+          <p className="eyebrow">
+            {formatLocalDate(new Date(), {
+              weekday: "long",
+              month: "long",
+              day: "numeric",
+              year: "numeric",
+            })}
+          </p>
           <h1>
-            Good morning, {user.full_name?.split(" ")[0] || "friend"}{" "}
+            {getGreeting()}, {user.full_name?.split(" ")[0] || "friend"}{" "}
             <span className="heart">♡</span>
           </h1>
           <p className="subtitle">Your goals, your pace, your journey.</p>
@@ -631,8 +682,8 @@ function Dashboard({ data, user, go, notify, onChange }) {
               <Plus size={17} />
             </button>
           </div>
-          {data.tasks.length ? (
-            data.tasks.slice(0, 4).map((task) => (
+          {todayTasks.length ? (
+            todayTasks.map((task) => (
               <div className="task-line" key={task.id}>
                 <button
                   type="button"
@@ -764,16 +815,31 @@ function Dashboard({ data, user, go, notify, onChange }) {
 
 function Tasks({ notify, onChanged }) {
   const [tasks, setTasks] = useState([]);
-  const [form, setForm] = useState({ priority: "Medium" });
+  const [form, setForm] = useState({
+    priority: "Medium",
+    dueDate: toLocalDateKey(new Date()),
+  });
   const [show, setShow] = useState(false);
   const load = () => api("/tasks").then(setTasks);
   useEffect(() => {
     load();
   }, []);
+  const todayKey = toLocalDateKey(new Date());
+  const sortedTasks = [...tasks].sort((a, b) => {
+    const aToday = a.due_date && toLocalDateKey(a.due_date) === todayKey ? 0 : 1;
+    const bToday = b.due_date && toLocalDateKey(b.due_date) === todayKey ? 0 : 1;
+    if (aToday !== bToday) return aToday - bToday;
+    if (Number(a.completed) !== Number(b.completed)) return Number(a.completed) - Number(b.completed);
+    return new Date(a.created_at || 0) - new Date(b.created_at || 0);
+  });
   const submit = async (e) => {
     e.preventDefault();
-    await api("/tasks", { method: "POST", body: JSON.stringify(form) });
-    setForm({ priority: "Medium" });
+    const payload = {
+      ...form,
+      dueDate: form.dueDate || toLocalDateKey(new Date()),
+    };
+    await api("/tasks", { method: "POST", body: JSON.stringify(payload) });
+    setForm({ priority: "Medium", dueDate: toLocalDateKey(new Date()) });
     setShow(false);
     await load();
     await onChanged?.();
@@ -799,7 +865,12 @@ function Tasks({ notify, onChanged }) {
       eyebrow="Make it happen"
       title="Your to-do list"
       action={
-        <Button onClick={() => setShow(true)}>
+        <Button
+          onClick={() => {
+            setForm({ priority: "Medium", dueDate: toLocalDateKey(new Date()) });
+            setShow(true);
+          }}
+        >
           <Plus size={17} /> Add task
         </Button>
       }
@@ -812,42 +883,73 @@ function Tasks({ notify, onChanged }) {
               {tasks.filter((t) => t.completed).length} completed
             </span>
           </div>
-          {tasks.length ? (
-            tasks.map((task) => (
-              <div className="full-task" key={task.id}>
-                <button
-                  className={task.completed ? "check checked" : "check"}
-                  onClick={() => toggle(task)}
+          {sortedTasks.length ? (
+            sortedTasks.map((task) => {
+              const isToday = task.due_date && toLocalDateKey(task.due_date) === todayKey;
+              return (
+                <div
+                  className="full-task"
+                  key={task.id}
+                  style={
+                    isToday
+                      ? { borderColor: "#b84a5a", background: "#fffaf8" }
+                      : undefined
+                  }
                 >
-                  {task.completed && <Check size={14} />}
-                </button>
-                <div className="task-copy">
-                  <strong className={task.completed ? "done" : ""}>
-                    {task.title}
-                  </strong>
-                  <p>{task.description}</p>
-                  <small>
-                    {task.category} · {task.priority} ·{" "}
-                    {task.due_date
-                      ? new Date(task.due_date).toLocaleDateString()
-                      : "No date"}
-                  </small>
+                  <button
+                    className={task.completed ? "check checked" : "check"}
+                    onClick={() => toggle(task)}
+                  >
+                    {task.completed && <Check size={14} />}
+                  </button>
+                  <div className="task-copy">
+                    <strong className={task.completed ? "done" : ""}>
+                      {task.title}
+                    </strong>
+                    <p>{task.description}</p>
+                    <small>
+                      {task.category} · {task.priority} ·{" "}
+                      {task.due_date
+                        ? new Date(task.due_date).toLocaleDateString()
+                        : "No date"}
+                      {isToday && (
+                        <span
+                          style={{
+                            display: "inline-block",
+                            marginLeft: 8,
+                            padding: "3px 8px",
+                            background: "#f7e3e2",
+                            color: "#7b2d3d",
+                            borderRadius: 999,
+                            fontWeight: 700,
+                          }}
+                        >
+                          Today
+                        </span>
+                      )}
+                    </small>
+                  </div>
+                  <button
+                    className="icon-button delete-button"
+                    onClick={() => remove(task.id)}
+                  >
+                    <X size={17} />
+                  </button>
                 </div>
-                <button
-                  className="icon-button delete-button"
-                  onClick={() => remove(task.id)}
-                >
-                  <X size={17} />
-                </button>
-              </div>
-            ))
+              );
+            })
           ) : (
             <Empty
               icon={CheckCircle2}
               title="Nothing on your list yet"
               body="Add your first task and make it wonderfully doable."
               action={
-                <Button onClick={() => setShow(true)}>
+                <Button
+                  onClick={() => {
+                    setForm({ priority: "Medium", dueDate: toLocalDateKey(new Date()) });
+                    setShow(true);
+                  }}
+                >
                   <Plus size={16} /> Add your first task
                 </Button>
               }
@@ -882,6 +984,7 @@ function Tasks({ notify, onChanged }) {
                 Due date
                 <input
                   type="date"
+                  value={form.dueDate || ""}
                   onChange={(e) =>
                     setForm({ ...form, dueDate: e.target.value })
                   }
@@ -1287,10 +1390,15 @@ function Roadmap({ notify }) {
                   <span>WEEK {index + 1}</span>
                   <h3>{week.title}</h3>
                   {week.days.map((day, dayIndex) => (
-                    <button className={completed[`${map.id}-${index}-${dayIndex}`] ? "roadmap-day checked" : "roadmap-day"} key={day} onClick={() => toggleDay(map, index, dayIndex, (map.content?.weeks || []).reduce((total, item) => total + item.days.length, 0))}>
+                    <button
+                      className={completed[`${map.id}-${index}-${dayIndex}`] ? "roadmap-day checked" : "roadmap-day"}
+                      key={day}
+                      aria-pressed={Boolean(completed[`${map.id}-${index}-${dayIndex}`])}
+                      onClick={() => toggleDay(map, index, dayIndex, (map.content?.weeks || []).reduce((total, item) => total + item.days.length, 0))}
+                    >
                       <span>{dayIndex + 1}</span>
                       {day}
-                      {completed[`${map.id}-${index}-${dayIndex}`] && <Check size={13} />}
+                      {completed[`${map.id}-${index}-${dayIndex}`] && <Check size={15} color="#3e714b" />}
                     </button>
                   ))}
                 </div>
@@ -1401,42 +1509,21 @@ function Calendar({ data }) {
     monthDate.getMonth() + 1,
     0,
   ).getDate();
-  const daysInPrevMonth = new Date(
-    monthDate.getFullYear(),
-    monthDate.getMonth(),
-    0,
-  ).getDate();
-  const cells = [];
-  for (let i = 0; i < startOffset; i += 1) {
-    const prevDate = daysInPrevMonth - startOffset + i + 1;
-    cells.push({
-      date: new Date(monthDate.getFullYear(), monthDate.getMonth() - 1, prevDate),
-      outside: true,
-    });
-  }
-  for (let i = 1; i <= daysInMonth; i += 1) {
-    cells.push({
-      date: new Date(monthDate.getFullYear(), monthDate.getMonth(), i),
-      outside: false,
-    });
-  }
-  while (cells.length % 7 !== 0) {
-    const next = cells.length - daysInMonth - startOffset + 1;
-    cells.push({
-      date: new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, next),
-      outside: true,
-    });
-  }
-  const selectedKey = selectedDate.toISOString().slice(0, 10);
+  const cells = Array.from(
+    { length: daysInMonth },
+    (_, index) => new Date(monthDate.getFullYear(), monthDate.getMonth(), index + 1),
+  );
+  const selectedKey = toLocalDateKey(selectedDate);
   const itemsForDay = (date) => {
-    const key = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
-      .toISOString()
-      .slice(0, 10);
+    const key = toLocalDateKey(date);
     const tasks = (data?.tasks || []).filter((task) => {
       if (!task.due_date) return false;
-      return new Date(task.due_date).toISOString().slice(0, 10) === key;
+      return toLocalDateKey(task.due_date) === key;
     });
-    const journal = data?.journal && new Date(data.journal.created_at).toISOString().slice(0, 10) === key ? [data.journal] : [];
+    const journal =
+      data?.journal && toLocalDateKey(data.journal.created_at) === key
+        ? [data.journal]
+        : [];
     return { tasks, journal };
   };
   const daySummary = itemsForDay(selectedDate);
@@ -1462,7 +1549,10 @@ function Calendar({ data }) {
           {["M", "T", "W", "T", "F", "S", "S"].map((x, i) => (
             <strong key={i}>{x}</strong>
           ))}
-          {cells.map(({ date, outside }, index) => {
+          {Array.from({ length: startOffset }, (_, index) => (
+            <span className="calendar-empty" key={`empty-${index}`} aria-hidden="true" />
+          ))}
+          {cells.map((date) => {
             const isToday =
               date.toDateString() === new Date().toDateString();
             const isSelected = date.toDateString() === selectedDate.toDateString();
@@ -1473,13 +1563,12 @@ function Calendar({ data }) {
                   "calendar-day",
                   isToday ? "today" : "",
                   isSelected ? "selected" : "",
-                  outside ? "outside" : "",
                 ].join(" ")}
-                key={`${date.toISOString()}-${index}`}
+                key={toLocalDateKey(date)}
                 onClick={() => setSelectedDate(date)}
               >
                 <span>{date.getDate()}</span>
-                {(tasks.length || journal.length) && <i />}
+                {tasks.length + journal.length > 0 && <i />}
               </button>
             );
           })}
@@ -1912,12 +2001,23 @@ function Notifications({ notify, onRead }) {
     onRead?.();
   };
   const respondToInvitation = async (item, status) => {
-    const collaborationId = item.body.match(/^collaboration:(\d+)\|/)?.[1];
-    if (!collaborationId) return;
-    await api(`/collaborations/${collaborationId}/respond`, {
-      method: "PATCH",
-      body: JSON.stringify({ status }),
-    });
+    const collaborationId = Number(String(item.body).match(/^collaboration:(\d+)\|/)?.[1] ?? "");
+    if (!collaborationId) {
+      await remove(item.id);
+      return;
+    }
+
+    try {
+      await api(`/collaborations/${collaborationId}/respond`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      });
+    } catch (error) {
+      if (!String(error.message || error).includes("Invitation not found")) {
+        throw error;
+      }
+    }
+
     await remove(item.id);
     notify(status === "active" ? "You joined the collaboration" : "Invitation declined");
   };
@@ -1952,7 +2052,7 @@ function Notifications({ notify, onRead }) {
                     <Button variant="secondary" onClick={() => respondToInvitation(item, "declined")}>Decline</Button>
                   </div>
                 )}
-                <small>{new Date(item.created_at).toLocaleString()}</small>
+                <small>{formatLocalDateTime(item.created_at)}</small>
               </div>
               <button className="icon-button" onClick={() => remove(item.id)}>
                 <X size={16} />
@@ -2151,6 +2251,7 @@ function Collaborations({ notify, user }) {
                     />
                   </label>
                 </div>
+                <CollaborationTasks collaborationId={item.id} notify={notify} />
               </>
             )}
           </div>
@@ -2165,6 +2266,122 @@ function Collaborations({ notify, user }) {
         </div>
       )}
     </PageTitle>
+  );
+}
+function CollaborationTasks({ collaborationId, notify }) {
+  const [tasks, setTasks] = useState([]);
+  const [form, setForm] = useState({ title: "", dueDate: "" });
+  const [loadError, setLoadError] = useState("");
+  const load = () =>
+    api(`/collaborations/${collaborationId}/tasks`).then((nextTasks) => {
+      setTasks(nextTasks);
+      setLoadError("");
+    });
+  useEffect(() => {
+    load().catch(() => setLoadError("Shared tasks could not be loaded."));
+  }, [collaborationId]);
+  const addTask = async (event) => {
+    event.preventDefault();
+    try {
+      await api(`/collaborations/${collaborationId}/tasks`, {
+        method: "POST",
+        body: JSON.stringify(form),
+      });
+      setForm({ title: "", dueDate: "" });
+      await load();
+      notify("Shared task added");
+    } catch (error) {
+      notify(error.message || "Could not add the shared task.");
+    }
+  };
+  const toggleTask = async (task) => {
+    try {
+      await api(`/collaborations/${collaborationId}/tasks/${task.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ completed: !Boolean(task.completed) }),
+      });
+      await load();
+    } catch (error) {
+      notify(error.message || "Could not update the shared task.");
+    }
+  };
+  const removeTask = async (taskId) => {
+    try {
+      await api(`/collaborations/${collaborationId}/tasks/${taskId}`, {
+        method: "DELETE",
+      });
+      await load();
+      notify("Shared task removed");
+    } catch (error) {
+      notify(error.message || "Could not remove the shared task.");
+    }
+  };
+  return (
+    <section className="collab-tasks">
+      <div className="collab-tasks-head">
+        <h3>Shared tasks</h3>
+        <span className="soft-label">{tasks.length} tasks</span>
+      </div>
+      <form className="collab-task-form" onSubmit={addTask}>
+        <input
+          required
+          maxLength={180}
+          value={form.title}
+          onChange={(event) => setForm({ ...form, title: event.target.value })}
+          placeholder="Add a task for this group"
+          aria-label="Shared task title"
+        />
+        <input
+          type="date"
+          value={form.dueDate}
+          onChange={(event) => setForm({ ...form, dueDate: event.target.value })}
+          aria-label="Shared task due date"
+        />
+        <Button>
+          <Plus size={16} /> Add task
+        </Button>
+      </form>
+      {loadError ? (
+        <p className="muted">{loadError}</p>
+      ) : tasks.length ? (
+        <div className="collab-task-list">
+          {tasks.map((task) => (
+            <div
+              className={Boolean(task.completed) ? "collab-task-row completed" : "collab-task-row"}
+              key={task.id}
+            >
+              <button
+                type="button"
+                className={task.completed ? "check checked" : "check"}
+                aria-label={task.completed ? "Mark shared task incomplete" : "Mark shared task complete"}
+                onClick={() => toggleTask(task)}
+              >
+                {task.completed && <Check size={14} />}
+              </button>
+              <div className="collab-task-copy">
+                <strong>{task.title}</strong>
+                <small>
+                  {task.creator_name ? `Added by ${task.creator_name}` : "Shared task"}
+                  {task.due_date
+                    ? ` · Due ${formatLocalDate(task.due_date, { month: "short", day: "numeric" })}`
+                    : ""}
+                </small>
+              </div>
+              <button
+                type="button"
+                className="icon-button collab-task-delete"
+                aria-label="Delete shared task"
+                onClick={() => removeTask(task.id)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="muted collab-task-empty">No shared tasks for this topic yet.</p>
+      )}
+    </section>
   );
 }
 function Habits({ notify }) {

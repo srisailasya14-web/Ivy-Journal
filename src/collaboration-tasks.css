@@ -1,0 +1,91 @@
+.collab-tasks {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.collab-tasks-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.collab-tasks-head h3 {
+  margin: 0;
+  color: var(--dark);
+  font-size: 16px;
+}
+
+.collab-task-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 190px) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.collab-task-form input {
+  min-width: 0;
+}
+
+.collab-task-form .button {
+  white-space: nowrap;
+}
+
+.collab-task-list {
+  margin-top: 12px;
+}
+
+.collab-task-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 4px;
+  border-top: 1px solid var(--line);
+}
+
+.collab-task-row .check {
+  flex: none;
+}
+
+.collab-task-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.collab-task-copy strong {
+  overflow-wrap: anywhere;
+  color: var(--dark);
+  font-size: 13px;
+}
+
+.collab-task-copy small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.collab-task-row.completed .collab-task-copy strong {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.collab-task-delete {
+  justify-self: end;
+}
+
+.collab-task-empty {
+  margin: 12px 0 0;
+}
+
+@media (max-width: 760px) {
+  .collab-task-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .collab-task-form .button {
+    justify-self: start;
+  }
+}

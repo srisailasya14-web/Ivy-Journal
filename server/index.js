@@ -62,8 +62,49 @@ const auth = async (req, res, next) => {
     res.status(401).json({ error: "Please sign in again" });
   }
 };
-const today = () => new Date().toISOString().slice(0, 10);
-const dateKey = (value) => new Date(value).toISOString().slice(0, 10);
+const toLocalDateKey = (value) => {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+const today = () => toLocalDateKey(new Date());
+const dateKey = (value) => toLocalDateKey(value);
+let collaborationTasksTableReady;
+const ensureCollaborationTasksTable = async () => {
+  if (!collaborationTasksTableReady) {
+    collaborationTasksTableReady = pool
+      .query(`CREATE TABLE IF NOT EXISTS collaboration_tasks (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        collaboration_id BIGINT UNSIGNED NOT NULL,
+        created_by BIGINT UNSIGNED NOT NULL,
+        completed_by BIGINT UNSIGNED NULL,
+        title VARCHAR(180) NOT NULL,
+        due_date DATE NULL,
+        completed BOOLEAN DEFAULT FALSE,
+        completed_at DATETIME NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(collaboration_id) REFERENCES collaborations(id) ON DELETE CASCADE,
+        FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY(completed_by) REFERENCES users(id) ON DELETE SET NULL,
+        INDEX idx_collaboration_tasks_status (collaboration_id, completed, due_date)
+      )`)
+      .catch((error) => {
+        collaborationTasksTableReady = null;
+        throw error;
+      });
+  }
+  await collaborationTasksTableReady;
+};
+const isActiveCollaborationMember = async (collaborationId, userId) => {
+  const [members] = await pool.query(
+    "SELECT 1 FROM collaboration_members WHERE collaboration_id = ? AND user_id = ? AND status = 'active'",
+    [collaborationId, userId],
+  );
+  return members.length > 0;
+};
 const log = async (userId, type, description) =>
   pool.query(
     "INSERT INTO activity_history (user_id, type, description) VALUES (?, ?, ?)",
@@ -633,6 +674,87 @@ app.get("/api/collaborations", auth, async (req, res) => {
   }
   res.json(rows);
 });
+app.get("/api/collaborations/:id/tasks", auth, async (req, res) => {
+  await ensureCollaborationTasksTable();
+  if (!(await isActiveCollaborationMember(req.params.id, req.user.id)))
+    return res.status(403).json({ error: "Join this collaboration to view its tasks." });
+  const [tasks] = await pool.query(
+    `SELECT ct.*, u.full_name AS creator_name
+    FROM collaboration_tasks ct
+    JOIN users u ON u.id = ct.created_by
+    WHERE ct.collaboration_id = ?
+    ORDER BY ct.completed, ct.due_date IS NULL, ct.due_date, ct.created_at DESC`,
+    [req.params.id],
+  );
+  res.json(tasks);
+});
+app.post("/api/collaborations/:id/tasks", auth, async (req, res) => {
+  await ensureCollaborationTasksTable();
+  if (!(await isActiveCollaborationMember(req.params.id, req.user.id)))
+    return res.status(403).json({ error: "Join this collaboration to add tasks." });
+  const title = String(req.body.title || "").trim();
+  const dueDate = req.body.dueDate || null;
+  if (!title)
+    return res.status(400).json({ error: "Task title is required." });
+  if (dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate))
+    return res.status(400).json({ error: "Choose a valid due date." });
+  const [created] = await pool.query(
+    "INSERT INTO collaboration_tasks (collaboration_id, created_by, title, due_date) VALUES (?, ?, ?, ?)",
+    [req.params.id, req.user.id, title, dueDate],
+  );
+  const [tasks] = await pool.query(
+    `SELECT ct.*, u.full_name AS creator_name
+    FROM collaboration_tasks ct JOIN users u ON u.id = ct.created_by
+    WHERE ct.id = ?`,
+    [created.insertId],
+  );
+  res.status(201).json(tasks[0]);
+});
+app.patch("/api/collaborations/:id/tasks/:taskId", auth, async (req, res) => {
+  await ensureCollaborationTasksTable();
+  if (!(await isActiveCollaborationMember(req.params.id, req.user.id)))
+    return res.status(403).json({ error: "Join this collaboration to update its tasks." });
+  if (typeof req.body.completed !== "boolean")
+    return res.status(400).json({ error: "Choose whether the task is complete." });
+  const [existing] = await pool.query(
+    "SELECT id FROM collaboration_tasks WHERE id = ? AND collaboration_id = ?",
+    [req.params.taskId, req.params.id],
+  );
+  if (!existing[0])
+    return res.status(404).json({ error: "Shared task not found." });
+  await pool.query(
+    `UPDATE collaboration_tasks
+    SET completed = ?, completed_by = IF(?, ?, NULL), completed_at = IF(?, NOW(), NULL)
+    WHERE id = ? AND collaboration_id = ?`,
+    [
+      req.body.completed,
+      req.body.completed,
+      req.user.id,
+      req.body.completed,
+      req.params.taskId,
+      req.params.id,
+    ],
+  );
+  const [tasks] = await pool.query(
+    `SELECT ct.*, u.full_name AS creator_name
+    FROM collaboration_tasks ct JOIN users u ON u.id = ct.created_by
+    WHERE ct.id = ?`,
+    [req.params.taskId],
+  );
+  res.json(tasks[0]);
+});
+app.delete("/api/collaborations/:id/tasks/:taskId", auth, async (req, res) => {
+  await ensureCollaborationTasksTable();
+  if (!(await isActiveCollaborationMember(req.params.id, req.user.id)))
+    return res.status(403).json({ error: "Join this collaboration to remove its tasks." });
+  const [deleted] = await pool.query(
+    "DELETE FROM collaboration_tasks WHERE id = ? AND collaboration_id = ?",
+    [req.params.taskId, req.params.id],
+  );
+  if (!deleted.affectedRows)
+    return res.status(404).json({ error: "Shared task not found." });
+  res.status(204).end();
+});
 app.post("/api/collaborations", auth, async (req, res) => {
   const {
     name,
@@ -712,12 +834,26 @@ app.post("/api/collaborations/:id/invite", auth, async (req, res) => {
 });
 app.patch("/api/collaborations/:id/respond", auth, async (req, res) => {
   const status = req.body.status === "active" ? "active" : "declined";
+  const [existing] = await pool.query(
+    "SELECT status FROM collaboration_members WHERE collaboration_id = ? AND user_id = ?",
+    [req.params.id, req.user.id],
+  );
+
+  if (!existing[0])
+    return res.status(404).json({ error: "Invitation not found." });
+
+  if (existing[0].status !== "pending") {
+    return res.json({ status: existing[0].status });
+  }
+
   const [result] = await pool.query(
     "UPDATE collaboration_members SET status = ?, joined_at = IF(? = 'active', NOW(), joined_at) WHERE collaboration_id = ? AND user_id = ? AND status = 'pending'",
     [status, status, req.params.id, req.user.id],
   );
+
   if (!result.affectedRows)
     return res.status(404).json({ error: "Invitation not found." });
+
   res.json({ status });
 });
 app.patch("/api/collaborations/:id/progress", auth, async (req, res) => {

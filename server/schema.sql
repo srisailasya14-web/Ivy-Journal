@@ -124,6 +124,21 @@ CREATE TABLE IF NOT EXISTS collaboration_members (
   FOREIGN KEY(collaboration_id) REFERENCES collaborations(id) ON DELETE CASCADE,
   FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS collaboration_tasks (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  collaboration_id BIGINT UNSIGNED NOT NULL,
+  created_by BIGINT UNSIGNED NOT NULL,
+  completed_by BIGINT UNSIGNED NULL,
+  title VARCHAR(180) NOT NULL,
+  due_date DATE NULL,
+  completed BOOLEAN DEFAULT FALSE,
+  completed_at DATETIME NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(collaboration_id) REFERENCES collaborations(id) ON DELETE CASCADE,
+  FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY(completed_by) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX idx_collaboration_tasks_status (collaboration_id, completed, due_date)
+);
 CREATE TABLE IF NOT EXISTS roadmaps (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT UNSIGNED NOT NULL,

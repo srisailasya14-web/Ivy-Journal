@@ -1,0 +1,74 @@
+.calendar-empty {
+  height: 65px;
+}
+
+.roadmap-card .week-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 14px;
+}
+
+.roadmap-card .week {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.roadmap-card .roadmap-day {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  margin-top: 7px;
+  padding: 8px;
+  border: 1px solid #eaded8;
+  border-radius: 6px;
+  background: #fffdfa;
+  color: #745d59;
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.roadmap-card .roadmap-day > span {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-size: 11px;
+}
+
+.roadmap-card .roadmap-day.checked {
+  border-color: #cfe2d1;
+  background: #eef6ef;
+  color: #385d43;
+}
+
+.roadmap-card .roadmap-day.checked > span {
+  border-radius: 5px;
+  background: #4f805b;
+  color: #ffffff;
+}
+
+.roadmap-card .roadmap-day.checked svg {
+  margin-left: 0;
+  color: #3e714b;
+}
+
+.roadmap-card .roadmap-day:hover {
+  border-color: #b7d0bb;
+}
+
+@media (max-width: 760px) {
+  .calendar-empty {
+    height: 45px;
+  }
+
+  .roadmap-card .week-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,207 @@
+CREATE DATABASE IF NOT EXISTS ivyjournal CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE ivyjournal;
+
+CREATE TABLE IF NOT EXISTS users (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  full_name VARCHAR(120) NOT NULL,
+  username VARCHAR(40) NOT NULL UNIQUE,
+  email VARCHAR(190) NOT NULL UNIQUE,
+  password_hash VARCHAR(255) NOT NULL,
+  avatar_url VARCHAR(500),
+  bio VARCHAR(500),
+  goals JSON,
+  interests JSON,
+  productivity_style VARCHAR(80),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  token_hash CHAR(64) NOT NULL UNIQUE,
+  expires_at DATETIME NOT NULL,
+  used_at DATETIME NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX idx_password_reset_user (user_id, expires_at)
+);
+CREATE TABLE IF NOT EXISTS tasks (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  title VARCHAR(180) NOT NULL,
+  description TEXT,
+  due_date DATE,
+  priority ENUM('Low','Medium','High') DEFAULT 'Medium',
+  category VARCHAR(80) DEFAULT 'Personal',
+  completed BOOLEAN DEFAULT FALSE,
+  completed_at DATETIME NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX idx_tasks_user_date (user_id, due_date), INDEX idx_tasks_user_completed (user_id, completed)
+);
+CREATE TABLE IF NOT EXISTS journal_entries (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  title VARCHAR(180) NOT NULL,
+  content TEXT NOT NULL,
+  mood ENUM('Great','Good','Okay','Low','Stressed') DEFAULT 'Okay',
+  tags JSON,
+  favorite BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX idx_journal_user_created (user_id, created_at)
+);
+CREATE TABLE IF NOT EXISTS moods (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  mood ENUM('Great','Good','Okay','Low','Stressed') NOT NULL,
+  score TINYINT UNSIGNED NOT NULL,
+  note VARCHAR(500),
+  recorded_on DATE NOT NULL,
+  UNIQUE KEY unique_daily_mood (user_id, recorded_on),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS goals (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  title VARCHAR(180) NOT NULL,
+  description TEXT,
+  target_date DATE,
+  progress TINYINT UNSIGNED DEFAULT 0,
+  status ENUM('Active','Completed','Paused') DEFAULT 'Active',
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS goal_tasks (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  goal_id BIGINT UNSIGNED NOT NULL,
+  user_id BIGINT UNSIGNED NOT NULL,
+  title VARCHAR(180) NOT NULL,
+  completed BOOLEAN DEFAULT FALSE,
+  completed_at DATETIME NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX idx_goal_tasks_goal (goal_id, completed)
+);
+CREATE TABLE IF NOT EXISTS vision_boards (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  title VARCHAR(180) NOT NULL,
+  description TEXT,
+  cover_url VARCHAR(500),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS vision_board_items (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  board_id BIGINT UNSIGNED NOT NULL,
+  kind ENUM('affirmation','keyword','quote','image') NOT NULL DEFAULT 'affirmation',
+  content TEXT NOT NULL,
+  position_x DECIMAL(8,2) DEFAULT 0,
+  position_y DECIMAL(8,2) DEFAULT 0,
+  FOREIGN KEY(board_id) REFERENCES vision_boards(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS collaborations (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  owner_id BIGINT UNSIGNED NOT NULL,
+  name VARCHAR(180) NOT NULL,
+  description TEXT,
+  combined_goal VARCHAR(255),
+  start_date DATE,
+  end_date DATE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(owner_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS collaboration_members (
+  collaboration_id BIGINT UNSIGNED NOT NULL,
+  user_id BIGINT UNSIGNED NOT NULL,
+  status ENUM('pending','active','declined','left') DEFAULT 'pending',
+  joined_at TIMESTAMP NULL,
+  progress TINYINT UNSIGNED DEFAULT 0,
+  PRIMARY KEY(collaboration_id, user_id),
+  FOREIGN KEY(collaboration_id) REFERENCES collaborations(id) ON DELETE CASCADE,
+  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS roadmaps (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  title VARCHAR(180) NOT NULL,
+  skill_level VARCHAR(40) DEFAULT 'Beginner',
+  duration_weeks INT DEFAULT 4,
+  content JSON NOT NULL,
+  progress TINYINT UNSIGNED DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS habits (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  title VARCHAR(120) NOT NULL,
+  frequency VARCHAR(40) DEFAULT 'Daily',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS habit_completions (
+  habit_id BIGINT UNSIGNED NOT NULL,
+  completed_on DATE NOT NULL,
+  PRIMARY KEY (habit_id, completed_on),
+  FOREIGN KEY (habit_id) REFERENCES habits(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS activity_history (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  type VARCHAR(50) NOT NULL,
+  description VARCHAR(255) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX idx_history_user_created (user_id, created_at)
+);
+CREATE TABLE IF NOT EXISTS streaks (
+  user_id BIGINT UNSIGNED PRIMARY KEY,
+  current_count INT DEFAULT 0,
+  longest_count INT DEFAULT 0,
+  last_active DATE NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS notifications (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  title VARCHAR(180) NOT NULL,
+  body VARCHAR(500) NOT NULL,
+  is_read BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS badges (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  slug VARCHAR(80) UNIQUE NOT NULL,
+  title VARCHAR(120) NOT NULL,
+  description VARCHAR(255) NOT NULL,
+  icon VARCHAR(10) NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_badges (
+  user_id BIGINT UNSIGNED NOT NULL,
+  badge_id BIGINT UNSIGNED NOT NULL,
+  earned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(user_id, badge_id),
+  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY(badge_id) REFERENCES badges(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS chat_conversations (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT UNSIGNED NOT NULL,
+  title VARCHAR(180) DEFAULT 'Ivy AI conversation',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  conversation_id BIGINT UNSIGNED NOT NULL,
+  role ENUM('user','assistant') NOT NULL,
+  content TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(conversation_id) REFERENCES chat_conversations(id) ON DELETE CASCADE,
+  INDEX idx_chat_conversation_created (conversation_id, created_at)
+);

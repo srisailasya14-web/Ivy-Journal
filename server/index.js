@@ -6,6 +6,7 @@ import jwt from "jsonwebtoken";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import multer from "multer";
 import { pool } from "./db.js";
 import {
@@ -18,6 +19,7 @@ import {
 
 const app = express();
 const port = process.env.PORT || 4000;
+const distDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dist");
 const uploadDir = path.resolve(process.env.UPLOAD_DIR || "uploads");
 fs.mkdirSync(uploadDir, { recursive: true });
 const imageUpload = multer({
@@ -40,6 +42,7 @@ pool.query(`CREATE TABLE IF NOT EXISTS goal_tasks (id BIGINT UNSIGNED AUTO_INCRE
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 app.use("/uploads", express.static(uploadDir, { index: false }));
+app.use(express.static(distDir));
 const tokenFor = (user) =>
   jwt.sign({ id: user.id }, process.env.JWT_SECRET || "dev-only-secret", {
     expiresIn: "7d",
@@ -1239,6 +1242,11 @@ app.delete("/api/notifications/:id", auth, async (req, res) => {
     req.user.id,
   ]);
   res.status(204).end();
+});
+app.get(/^(?!\/api(?:\/|$)).*/, (req, res, next) => {
+  res.sendFile(path.join(distDir, "index.html"), (error) => {
+    if (error) next(error);
+  });
 });
 app.listen(port, () =>
   console.log(`IvyJournal API listening on http://localhost:${port}`),

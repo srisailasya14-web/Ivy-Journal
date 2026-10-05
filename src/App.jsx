@@ -65,6 +65,13 @@ async function api(path, options = {}) {
   return data;
 }
 
+function aiErrorMessage(error, fallback) {
+  if (error instanceof TypeError || error instanceof SyntaxError) {
+    return "Ivy couldn't connect right now. Please check your connection and try again.";
+  }
+  return error?.message || fallback;
+}
+
 function formatLocalDate(value, options = {}) {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
@@ -95,6 +102,22 @@ function toLocalDateKey(value) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function recentLocalDates(count) {
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date();
+    date.setHours(12, 0, 0, 0);
+    date.setDate(date.getDate() - (count - index - 1));
+    return date;
+  });
+}
+
+function dateValueKey(value) {
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value)) {
+    return value.slice(0, 10);
+  }
+  return toLocalDateKey(value);
 }
 
 function getGreeting() {
@@ -546,7 +569,7 @@ function Shell({ user, onLogout }) {
           )}
           {page === "To-Do List" && <Tasks notify={notify} onChanged={refreshDashboard} />}
           {page === "Journal" && <Journal notify={notify} />}
-          {page === "Mood Tracker" && <Mood notify={notify} />}
+          {page === "Mood Tracker" && <Mood notify={notify} onChanged={refreshDashboard} />}
           {page === "Vision Board" && <VisionBoard notify={notify} />}
           {page === "AI Roadmap" && <Roadmap notify={notify} />}
           {page === "Collaborations" && (
@@ -569,12 +592,16 @@ function Shell({ user, onLogout }) {
 }
 
 function Dashboard({ data, user, go, notify, onChange }) {
-  const percent = data.taskStats.total
-    ? Math.round((data.taskStats.completed / data.taskStats.total) * 100)
-    : 0;
   const todayKey = toLocalDateKey(new Date());
   const todayTasks = (data.tasks || []).filter(
     (task) => task.due_date && toLocalDateKey(task.due_date) === todayKey,
+  );
+  const completedToday = todayTasks.filter((task) => task.completed).length;
+  const todayPercent = todayTasks.length
+    ? Math.round((completedToday / todayTasks.length) * 100)
+    : 0;
+  const todayMood = data.moods.find(
+    (item) => dateValueKey(item.recorded_on) === todayKey,
   );
   const [suggestions, setSuggestions] = useState([]);
   useEffect(() => {
@@ -655,14 +682,14 @@ function Dashboard({ data, user, go, notify, onChange }) {
           <div className="stat-icon cream-icon">
             <Target size={20} />
           </div>
-          <p>Progress</p>
+          <p>Today's progress</p>
           <strong>
-            {data.taskStats.completed}/{data.taskStats.total}
+            {completedToday}/{todayTasks.length}
           </strong>
           <div className="progress-track">
-            <i style={{ width: `${percent}%` }} />
+            <i style={{ width: `${todayPercent}%` }} />
           </div>
-          <span>Completed Tasks: {data.taskStats.completed}/{data.taskStats.total}</span>
+          <span>Today's scheduled tasks</span>
         </div>
       </section>
       <div className="section-heading">
@@ -720,26 +747,32 @@ function Dashboard({ data, user, go, notify, onChange }) {
           </div>
           <div className="mood-main">
             <div className="mood-orb">
-              {data.moods[0]?.mood === "Great" ? "☀" : "♡"}
+              {todayMood?.mood === "Great" ? "☀" : "♡"}
             </div>
             <div>
-              <strong>{data.moods[0]?.mood || "Not recorded"}</strong>
+              <strong>{todayMood?.mood || "Not recorded"}</strong>
               <p>
-                {data.moods[0]
+                {todayMood
                   ? "A little check-in can change a whole day."
                   : "How are you feeling today?"}
               </p>
             </div>
           </div>
           <div className="mood-week">
-            {["M", "T", "W", "T", "F", "S", "S"].map((day, i) => (
-              <div key={i}>
-                <span>{day}</span>
-                <i className={i < 4 ? "mood-dot filled" : "mood-dot"}>
-                  {i < 4 ? "•" : ""}
-                </i>
-              </div>
-            ))}
+            {recentLocalDates(7).map((date) => {
+              const key = toLocalDateKey(date);
+              const mood = data.moods.find(
+                (item) => dateValueKey(item.recorded_on) === key,
+              );
+              return (
+                <div key={key} title={mood ? `${mood.mood}: ${mood.score}/5` : "No check-in"}>
+                  <span>{date.toLocaleDateString(undefined, { weekday: "narrow" })}</span>
+                  <i className={mood ? "mood-dot filled" : "mood-dot"}>
+                    {mood ? "•" : ""}
+                  </i>
+                </div>
+              );
+            })}
           </div>
         </div>
         <div className="panel journal-panel">
@@ -1036,9 +1069,7 @@ function Journal({ notify }) {
       });
       setReflectionMap((prev) => ({ ...prev, [entry.id]: data.reflection }));
     } catch (error) {
-      notify(
-        error.message || "Reflection could not be generated. Please try again.",
-      );
+      notify(aiErrorMessage(error, "Reflection could not be generated. Please try again."));
     } finally {
       setLoadingId(null);
     }
@@ -1110,7 +1141,7 @@ function Journal({ notify }) {
                 {reflectionMap[entry.id] && (
                   <div className="reflection-box">
                     <strong>AI reflection</strong>
-                    <p>{reflectionMap[entry.id]}</p>
+                    <p style={{ whiteSpace: "pre-line" }}>{reflectionMap[entry.id]}</p>
                   </div>
                 )}
               </div>
@@ -1197,11 +1228,20 @@ function Journal({ notify }) {
   );
 }
 
-function Mood({ notify }) {
+function Mood({ notify, onChanged }) {
   const [selected, setSelected] = useState("Good");
   const [note, setNote] = useState("");
   const [history, setHistory] = useState([]);
-  const load = () => api("/moods").then(setHistory);
+  const load = () => api("/moods").then((items) => {
+    setHistory(items);
+    const todayMood = items.find(
+      (item) => dateValueKey(item.recorded_on) === toLocalDateKey(new Date()),
+    );
+    if (todayMood) {
+      setSelected(todayMood.mood);
+      setNote(todayMood.note || "");
+    }
+  });
   useEffect(() => {
     load();
   }, []);
@@ -1212,6 +1252,7 @@ function Mood({ notify }) {
       body: JSON.stringify({ mood: selected, note }),
     });
     await load();
+    await onChanged?.();
     notify("Mood recorded for today");
   };
   return (
@@ -1220,7 +1261,9 @@ function Mood({ notify }) {
         <div className="panel mood-checkin">
           <div className="panel-head">
             <h3>Today's check-in</h3>
-            <span className="soft-label">September 15</span>
+            <span className="soft-label">
+              {formatLocalDate(new Date(), { month: "long", day: "numeric", year: "numeric" })}
+            </span>
           </div>
           <p className="muted">
             There is no wrong answer. Just notice what is here.
@@ -1269,32 +1312,28 @@ function Mood({ notify }) {
             <span className="soft-label">Last 7 days</span>
           </div>
           <div className="mood-chart">
-            {(history.length
-              ? history.slice(0, 7).reverse()
-              : [1, 2, 3, 4, 3, 4, 4]
-            ).map((item, i) => {
-              const score = typeof item === "number" ? item : item.score;
+            {recentLocalDates(7).map((date) => {
+              const dayKey = toLocalDateKey(date);
+              const item = history.find(
+                (mood) => dateValueKey(mood.recorded_on) === dayKey,
+              );
+              const score = item ? Number(item.score) : 0;
               return (
-                <div className="chart-column" key={i}>
+                <div className="chart-column" key={dayKey} title={item ? `${item.mood}: ${score}/5` : "No check-in"}>
                   <div
                     className="chart-bar"
-                    style={{ height: `${score * 17}%` }}
+                    style={{ height: `${score * 17}%`, opacity: item ? 1 : 0.18 }}
                   />
                   <small>
-                    {typeof item === "number"
-                      ? ["M", "T", "W", "T", "F", "S", "S"][i]
-                      : new Date(item.recorded_on).toLocaleDateString(
-                          undefined,
-                          { weekday: "narrow" },
-                        )}
+                    {date.toLocaleDateString(undefined, { weekday: "narrow" })}
                   </small>
                 </div>
               );
             })}
           </div>
           <p className="chart-caption">
-            <span className="chart-dot" /> A gentle upward trend is worth
-            noticing.
+            <span className="chart-dot" /> Each bar shows that day's recorded
+            mood score; blank days have no check-in.
           </p>
         </div>
       </div>
@@ -1625,8 +1664,12 @@ function Calendar({ data }) {
   );
 }
 function Progress({ data }) {
-  const total = Number(data?.taskStats?.total || 0);
-  const completed = Number(data?.taskStats?.completed || 0);
+  const todayKey = toLocalDateKey(new Date());
+  const todayTasks = (data?.tasks || []).filter(
+    (task) => task.due_date && toLocalDateKey(task.due_date) === todayKey,
+  );
+  const total = todayTasks.length;
+  const completed = todayTasks.filter((task) => task.completed).length;
   const percent = total ? Math.round((completed / total) * 100) : 0;
   const journalCount = data?.journal ? 1 : 0;
   const activeGoals = Number(data?.goals?.length || 0);
@@ -1643,9 +1686,11 @@ function Progress({ data }) {
           </div>
           <div>
             <span className="eyebrow">Today's progress</span>
-            <h2>Momentum looks good.</h2>
+            <h2>{total ? "Momentum looks good." : "A fresh start for today."}</h2>
             <p className="muted">
-              You completed {completed} of {total} planned tasks.
+              {total
+                ? `You completed ${completed} of ${total} tasks scheduled for today.`
+                : "No tasks are scheduled for today yet."}
             </p>
           </div>
         </div>
@@ -1668,7 +1713,7 @@ function Progress({ data }) {
         <div className="progress-stats-grid">
           <div>
             <strong>{completed}/{total}</strong>
-            <span>Tasks</span>
+            <span>Today's tasks</span>
           </div>
           <div>
             <strong>{journalCount}</strong>
@@ -1679,6 +1724,37 @@ function Progress({ data }) {
             <span>Roadmaps</span>
           </div>
         </div>
+        <div className="panel-head" style={{ marginTop: 24 }}>
+          <h3>Daily task completions</h3>
+          <span className="soft-label">Last 7 days</span>
+        </div>
+        <div className="mood-chart" aria-label="Tasks completed each day in the last seven days">
+          {recentLocalDates(7).map((date) => {
+            const dayKey = toLocalDateKey(date);
+            const completedOnDay = Number(
+              data?.dailyProgress?.find((day) => day.day === dayKey)?.completed || 0,
+            );
+            const maximum = Math.max(
+              1,
+              ...(data?.dailyProgress || []).map((day) => Number(day.completed || 0)),
+            );
+            return (
+              <div className="chart-column" key={dayKey} title={`${completedOnDay} task${completedOnDay === 1 ? "" : "s"} completed`}>
+                <div
+                  className="chart-bar"
+                  style={{
+                    height: `${completedOnDay ? Math.max(8, (completedOnDay / maximum) * 85) : 0}%`,
+                    opacity: completedOnDay ? 1 : 0.18,
+                  }}
+                />
+                <small>{date.toLocaleDateString(undefined, { weekday: "narrow" })}</small>
+              </div>
+            );
+          })}
+        </div>
+        <p className="chart-caption">
+          Completed tasks are grouped by the day they were marked complete.
+        </p>
       </div>
     </PageTitle>
   );
@@ -2504,17 +2580,31 @@ function Chat() {
   const [conversationId, setConversationId] = useState(null);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [error, setError] = useState("");
   useEffect(() => {
+    let active = true;
     api("/chat").then((data) => {
+      if (!active) return;
       setConversationId(data.conversationId);
       setMessages(data.messages);
+    }).catch((requestError) => {
+      if (active) {
+        setError(aiErrorMessage(requestError, "Your conversation couldn't be loaded. You can still start a new message."));
+      }
+    }).finally(() => {
+      if (active) setHistoryLoading(false);
     });
+    return () => {
+      active = false;
+    };
   }, []);
   const send = async (e) => {
     e.preventDefault();
     if (!message.trim() || loading) return;
     const text = message;
     setMessage("");
+    setError("");
     setMessages((items) => [...items, { role: "user", content: text }]);
     setLoading(true);
     try {
@@ -2524,6 +2614,8 @@ function Chat() {
       });
       setConversationId(reply.conversationId);
       setMessages((items) => [...items, reply]);
+    } catch (requestError) {
+      setError(aiErrorMessage(requestError, "Ivy couldn't respond just now. Please try again."));
     } finally {
       setLoading(false);
     }
@@ -2541,7 +2633,15 @@ function Chat() {
             you need next.
           </p>
         </div>
-        <div className="messages">
+        <div className="messages" aria-live="polite">
+          {error && (
+            <div role="alert" style={{ color: "var(--cherry)", fontSize: 12, lineHeight: 1.5 }}>
+              {error}
+            </div>
+          )}
+          {historyLoading && (
+            <div className="message typing">Loading your conversation...</div>
+          )}
           {messages.length ? (
             messages.map((item, index) => (
               <div
@@ -2549,12 +2649,16 @@ function Chat() {
                   item.role === "user" ? "message user-message" : "message"
                 }
                 key={`${item.created_at || "now"}-${index}`}
+                style={{ whiteSpace: "pre-line" }}
               >
                 {item.content}
               </div>
             ))
-          ) : (
+          ) : !historyLoading ? (
             <div className="chat-suggestion">
+              <p style={{ color: "var(--muted)", fontSize: 12, margin: "0 0 4px", width: "100%" }}>
+                Start with a question, or choose a prompt:
+              </p>
               <button
                 onClick={() =>
                   setMessage("Help me break a big goal into smaller steps.")
@@ -2570,7 +2674,7 @@ function Chat() {
                 Give me a reflection prompt <ArrowRight size={14} />
               </button>
             </div>
-          )}
+          ) : null}
           {loading && <div className="message typing">Thinking gently...</div>}
         </div>
         <form className="chat-form" onSubmit={send}>
@@ -2579,7 +2683,7 @@ function Chat() {
             onChange={(e) => setMessage(e.target.value)}
             placeholder="Ask Ivy anything about your next step..."
           />
-          <button aria-label="Send message">
+          <button aria-label="Send message" disabled={loading}>
             <Send size={17} />
           </button>
         </form>

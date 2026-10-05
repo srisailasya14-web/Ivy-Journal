@@ -373,6 +373,10 @@ app.get("/api/dashboard", auth, async (req, res) => {
     "SELECT mood, score, recorded_on FROM moods WHERE user_id = ? ORDER BY recorded_on DESC LIMIT 7",
     [id],
   );
+  const [dailyProgress] = await pool.query(
+    "SELECT DATE_FORMAT(completed_at, '%Y-%m-%d') AS day, COUNT(*) AS completed FROM tasks WHERE user_id = ? AND completed = 1 AND completed_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) GROUP BY DATE(completed_at)",
+    [id],
+  );
   const [journal] = await pool.query(
     "SELECT * FROM journal_entries WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
     [id],
@@ -394,6 +398,10 @@ app.get("/api/dashboard", auth, async (req, res) => {
     streak: streak || { current_count: 0, longest_count: 0 },
     tasks,
     todayTasks: tasks.filter((task) => task.due_date && dateKey(task.due_date) === todayKeyValue),
+    dailyProgress: dailyProgress.map((day) => ({
+      day: day.day,
+      completed: Number(day.completed),
+    })),
     moods,
     journal: journal[0] || null,
     goals,
@@ -529,7 +537,14 @@ app.post("/api/journal/:id/reflect", auth, async (req, res) => {
   );
   if (!rows[0])
     return res.status(404).json({ error: "Journal entry not found." });
-  const reflection = await generateJournalReflection(rows[0]);
+  let reflection;
+  try {
+    reflection = await generateJournalReflection(rows[0]);
+  } catch (error) {
+    return res
+      .status(error.status || 503)
+      .json({ error: error.message || "Ivy could not reflect on this entry. Please try again." });
+  }
   await log(
     req.user.id,
     "journal_reflection",
@@ -1096,9 +1111,14 @@ app.get("/api/chat", auth, async (req, res) => {
   res.json({ conversationId: conversations[0].id, messages });
 });
 app.post("/api/chat", auth, async (req, res) => {
-  if (!req.body.message?.trim())
+  const message = typeof req.body.message === "string" ? req.body.message.trim() : "";
+  if (!message)
     return res.status(400).json({ error: "Message is required." });
+  if (message.length > 4000)
+    return res.status(400).json({ error: "Messages must be 4,000 characters or fewer." });
   let conversationId = req.body.conversationId;
+  if (conversationId && !/^\d+$/.test(String(conversationId)))
+    return res.status(400).json({ error: "Conversation not found." });
   if (!conversationId) {
     const [created] = await pool.query(
       "INSERT INTO chat_conversations (user_id) VALUES (?)",
@@ -1113,15 +1133,80 @@ app.post("/api/chat", auth, async (req, res) => {
     if (!owned[0])
       return res.status(403).json({ error: "Conversation not found." });
   }
+  const [historyRows] = await pool.query(
+    "SELECT role, content FROM chat_messages WHERE conversation_id = ? ORDER BY created_at DESC, id DESC LIMIT 20",
+    [conversationId],
+  );
   await pool.query(
     "INSERT INTO chat_messages (conversation_id, role, content) VALUES (?, 'user', ?)",
-    [conversationId, req.body.message.trim()],
+    [conversationId, message],
   );
-  const [goals] = await pool.query(
-    "SELECT title FROM goals WHERE user_id = ? AND status = 'Active' LIMIT 1",
-    [req.user.id],
-  );
-  const content = await answerChat(req.body.message, { goal: goals[0]?.title });
+  const query = message.toLowerCase();
+  const progressQuestion = /\b(progress|doing|completed|streak|performance)\b/.test(query);
+  const context = { history: historyRows.reverse() };
+  if (progressQuestion || /\b(goal|goals|plan|planning)\b/.test(query)) {
+    const [goals] = await pool.query(
+      "SELECT title, description, progress, status FROM goals WHERE user_id = ? AND status = 'Active' ORDER BY id DESC LIMIT 5",
+      [req.user.id],
+    );
+    if (goals.length) context.goals = goals;
+  }
+  if (progressQuestion || /\b(task|tasks|productivity|today|priorit|organize)\b/.test(query)) {
+    const [[taskStats]] = await pool.query(
+      "SELECT COUNT(*) AS total, SUM(completed = 1) AS completed FROM tasks WHERE user_id = ?",
+      [req.user.id],
+    );
+    const [tasks] = await pool.query(
+      "SELECT title, completed, due_date FROM tasks WHERE user_id = ? ORDER BY completed, due_date IS NULL, due_date, created_at DESC LIMIT 8",
+      [req.user.id],
+    );
+    context.taskProgress = {
+      total: Number(taskStats.total || 0),
+      completed: Number(taskStats.completed || 0),
+      tasks,
+    };
+  }
+  if (progressQuestion || /\b(streak|habit|consisten)\b/.test(query)) {
+    const [streaks] = await pool.query(
+      "SELECT current_count, longest_count FROM streaks WHERE user_id = ?",
+      [req.user.id],
+    );
+    if (streaks[0]) context.streak = streaks[0];
+  }
+  if (/\b(mood|feeling|felt|emotion|wellbeing)\b/.test(query)) {
+    const [moods] = await pool.query(
+      "SELECT mood, score, recorded_on FROM moods WHERE user_id = ? ORDER BY recorded_on DESC LIMIT 3",
+      [req.user.id],
+    );
+    if (moods.length) context.recentMoods = moods;
+  }
+  if (/\b(journal|entry|entries|reflection|reflect)\b/.test(query)) {
+    const [entries] = await pool.query(
+      "SELECT title, content, mood, created_at FROM journal_entries WHERE user_id = ? ORDER BY created_at DESC LIMIT 2",
+      [req.user.id],
+    );
+    if (entries.length) {
+      context.recentJournalEntries = entries.map((entry) => ({
+        ...entry,
+        content: entry.content.slice(0, 500),
+      }));
+    }
+  }
+  if (/\b(roadmap|learning|learn|study|career|skill)\b/.test(query)) {
+    const [roadmaps] = await pool.query(
+      "SELECT title, skill_level, duration_weeks, progress FROM roadmaps WHERE user_id = ? ORDER BY created_at DESC LIMIT 3",
+      [req.user.id],
+    );
+    if (roadmaps.length) context.roadmaps = roadmaps;
+  }
+  let content;
+  try {
+    content = await answerChat(message, context);
+  } catch (error) {
+    return res
+      .status(error.status || 503)
+      .json({ error: error.message || "Ivy could not respond right now. Please try again." });
+  }
   await pool.query(
     "INSERT INTO chat_messages (conversation_id, role, content) VALUES (?, 'assistant', ?)",
     [conversationId, content],

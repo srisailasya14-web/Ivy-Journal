@@ -21,7 +21,7 @@ Open http://localhost:5173. The API runs at http://localhost:4000.
 - `server/schema.sql`: MySQL-only relational schema with foreign keys and indexes.
 - `server/seed.js`: explicit development-only seed script.
 
-AI features accept optional server-only `AI_API_KEY`, `AI_MODEL`, and `AI_BASE_URL` values for an OpenAI-compatible chat-completions endpoint. When unset or unavailable, the API returns deterministic, useful fallback content and core CRUD continues to work. Never expose these values in client code.
+AI features accept optional server-only `AI_API_KEY`, `AI_MODEL`, and `AI_BASE_URL` values for an OpenAI-compatible chat-completions endpoint. Ivy AI chat and journal reflections use the configured provider and return a user-friendly error if it is unavailable; when `AI_API_KEY` is unset, they use built-in fallback responses. Other AI-assisted features retain their deterministic fallback behavior. Never expose these values in client code.
 
 ## Production
 Run `npm.cmd run build`, serve the generated `dist` directory behind a reverse proxy, and run `npm.cmd start` for the API. Use HTTPS, a strong JWT secret, a managed MySQL instance, and a private upload volume in production. Do not commit `.env` or uploaded files.

@@ -377,7 +377,7 @@ app.get("/api/dashboard", auth, async (req, res) => {
     [id],
   );
   const [dailyProgress] = await pool.query(
-    "SELECT DATE_FORMAT(completed_at, '%Y-%m-%d') AS day, COUNT(*) AS completed FROM tasks WHERE user_id = ? AND completed = 1 AND completed_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) GROUP BY DATE(completed_at)",
+    "SELECT DATE_FORMAT(completed_at, '%Y-%m-%d') AS day, COUNT(*) AS completed FROM tasks WHERE user_id = ? AND completed = 1 AND completed_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) GROUP BY DATE_FORMAT(completed_at, '%Y-%m-%d')",
     [id],
   );
   const [journal] = await pool.query(
